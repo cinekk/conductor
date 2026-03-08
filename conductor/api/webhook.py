@@ -1,7 +1,13 @@
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+import logging
 
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
+
+from conductor.adapters.linear.signature import verify_linear_signature
+from conductor.config import settings
 from conductor.core.orchestrator import Orchestrator
 from conductor.core.ports.adapter_port import AdapterPort
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Conductor", version="0.1.0")
 
@@ -18,9 +24,45 @@ async def _process(adapter: AdapterPort, payload: dict) -> None:  # type: ignore
     await adapter.from_task(updated)
 
 
+async def _verify_linear_signature(
+    request: Request,
+    linear_signature: str | None = Header(default=None, alias="Linear-Signature"),
+) -> None:
+    """FastAPI dependency: verify the Linear-Signature HMAC header.
+
+    If LINEAR_WEBHOOK_SECRET is not configured, skips verification and logs a
+    warning (useful for local dev). In production, always set the secret.
+    """
+    secret = settings.linear_webhook_secret
+    if not secret:
+        logger.warning("LINEAR_WEBHOOK_SECRET not set — skipping signature verification")
+        return
+    if not linear_signature:
+        raise HTTPException(status_code=401, detail="Missing Linear-Signature header")
+    body = await request.body()
+    if not verify_linear_signature(body, linear_signature, secret):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# NOTE: /webhook/linear must be registered BEFORE /webhook/{source} so FastAPI
+# matches the specific route first.
+@app.post("/webhook/linear", dependencies=[Depends(_verify_linear_signature)])
+async def receive_linear_webhook(
+    request: Request,
+    background: BackgroundTasks,
+) -> dict[str, str]:
+    """Linear-specific webhook endpoint with HMAC signature verification."""
+    adapter = adapter_registry.get("linear")
+    if not adapter:
+        raise HTTPException(status_code=404, detail="No adapter registered for source: linear")
+    payload = await request.json()
+    background.add_task(_process, adapter, payload)
+    return {"status": "accepted"}
 
 
 @app.post("/webhook/{source}")
