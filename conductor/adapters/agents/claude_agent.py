@@ -45,8 +45,16 @@ class ClaudeAgentAdapter(LLMPort):
                     allowed_tools=effective_tools,
                 ),
             ):
-                if isinstance(message, ResultMessage) and message.result:
-                    result_parts.append(message.result)
+                if isinstance(message, ResultMessage):
+                    if message.total_cost_usd is not None:
+                        span.set_attribute("llm.cost_usd", message.total_cost_usd)
+                    if message.usage:
+                        for k, v in message.usage.items():
+                            span.set_attribute(f"llm.usage.{k}", v)
+                    span.set_attribute("llm.num_turns", message.num_turns)
+                    span.set_attribute("llm.duration_ms", message.duration_ms)
+                    if message.result:
+                        result_parts.append(message.result)
             result = "\n".join(result_parts)
             span.set_attribute("llm.response_length", len(result))
             return result
