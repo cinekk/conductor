@@ -14,12 +14,15 @@ from conductor.api.webhook import app  # noqa: F401  (re-exported for uvicorn)
 from conductor.config import settings
 from conductor.core.domain.task import AgentType
 from conductor.core.orchestrator import Orchestrator
+from conductor.observability import setup_tracing
 
 logging.basicConfig(level=settings.log_level.upper())
 
 
 def build_app() -> None:
     """Initialise registries. Called once at startup."""
+    setup_tracing()
+
     # Agent registry — populated as real agents are implemented (M3)
     agent_registry: dict[AgentType, object] = {}
 
