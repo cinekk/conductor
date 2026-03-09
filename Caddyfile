@@ -1,0 +1,12 @@
+# Caddy reverse proxy — automatic HTTPS via Let's Encrypt
+#
+# Domains are injected from environment variables set in docker-compose.yml.
+# {$VAR} is Caddy's env-var interpolation syntax.
+
+{$CONDUCTOR_DOMAIN} {
+    reverse_proxy conductor:8000
+}
+
+{$LANGFUSE_DOMAIN} {
+    reverse_proxy langfuse:3000
+}

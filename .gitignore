@@ -20,3 +20,11 @@ dist/
 .vscode/
 .idea/
 *.swp
+
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/crash.log

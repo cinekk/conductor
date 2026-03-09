@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — never commit it.
+
+# ─── Provider ─────────────────────────────────────────────────────────────────
+# Options: "hetzner" | "digitalocean"
+cloud_provider = "hetzner"
+
+# ─── Tokens (only the one matching cloud_provider is needed) ──────────────────
+hcloud_token = "your-hetzner-api-token"
+# do_token   = "your-digitalocean-api-token"
+
+# ─── Server ───────────────────────────────────────────────────────────────────
+server_name  = "conductor"
+ssh_key_name = "your-ssh-key-name"   # must already exist in the cloud provider
+github_repo  = "yourusername/conductor"
+
+# ─── Domains ──────────────────────────────────────────────────────────────────
+conductor_domain = "conductor.yourdomain.com"
+langfuse_domain  = "langfuse.yourdomain.com"
