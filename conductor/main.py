@@ -8,6 +8,14 @@ import logging
 import uvicorn
 
 import conductor.api.webhook as webhook_module
+from conductor.adapters.agents.agent_impls import (
+    DeployerAgent,
+    DeveloperAgent,
+    OrchestratorAgent,
+    QAAgent,
+    ResearcherAgent,
+)
+from conductor.adapters.agents.claude_agent import ClaudeAgentAdapter
 from conductor.adapters.linear.adapter import LinearAdapter
 from conductor.adapters.linear.client import LinearClient
 from conductor.api.webhook import app  # noqa: F401  (re-exported for uvicorn)
@@ -15,6 +23,7 @@ from conductor.config import settings
 from conductor.core.domain.task import AgentType
 from conductor.core.orchestrator import Orchestrator
 from conductor.observability import setup_tracing
+from conductor.prompts import PromptRegistry
 
 logging.basicConfig(level=settings.log_level.upper())
 
@@ -23,8 +32,30 @@ def build_app() -> None:
     """Initialise registries. Called once at startup."""
     setup_tracing()
 
-    # Agent registry — populated as real agents are implemented (M3)
-    agent_registry: dict[AgentType, object] = {}
+    prompts = PromptRegistry()
+
+    agent_registry: dict[AgentType, object] = {
+        AgentType.ORCHESTRATOR: OrchestratorAgent(
+            llm=ClaudeAgentAdapter(allowed_tools=["Read"]),
+            prompts=prompts,
+        ),
+        AgentType.DEVELOPER: DeveloperAgent(
+            llm=ClaudeAgentAdapter(allowed_tools=["Read", "Write", "Edit", "Bash"]),
+            prompts=prompts,
+        ),
+        AgentType.QA: QAAgent(
+            llm=ClaudeAgentAdapter(allowed_tools=["Read", "Bash"]),
+            prompts=prompts,
+        ),
+        AgentType.DEPLOYER: DeployerAgent(
+            llm=ClaudeAgentAdapter(allowed_tools=["Read", "Bash"]),
+            prompts=prompts,
+        ),
+        AgentType.RESEARCHER: ResearcherAgent(
+            llm=ClaudeAgentAdapter(allowed_tools=["Read"]),
+            prompts=prompts,
+        ),
+    }
 
     orch = Orchestrator(agent_registry=agent_registry)  # type: ignore[arg-type]
     webhook_module.orchestrator = orch
