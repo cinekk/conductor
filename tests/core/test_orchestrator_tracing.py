@@ -8,7 +8,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from conductor.core.domain.task import AgentType, ConductorTask, TaskStatus
+from conductor.core.domain.task import AgentType, ConductorProject, ConductorTask, TaskStatus
 from conductor.core.orchestrator import Orchestrator
 from conductor.core.ports.agent_port import AgentPort
 
@@ -16,6 +16,9 @@ from conductor.core.ports.agent_port import AgentPort
 class EchoAgent(AgentPort):
     async def execute(self, task: ConductorTask) -> ConductorTask:
         return task
+
+
+_PROJECT = ConductorProject(id="testapp", name="TestApp", repo_url="git@github.com:org/testapp.git")
 
 
 def make_task() -> ConductorTask:
@@ -27,6 +30,7 @@ def make_task() -> ConductorTask:
         spec="spec",
         status=TaskStatus.PENDING,
         assigned_to=AgentType.ORCHESTRATOR,
+        project=_PROJECT,
     )
 
 

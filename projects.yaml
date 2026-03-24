@@ -1,0 +1,30 @@
+# projects.yaml — Conductor project registry
+#
+# One entry per project managed by Conductor.
+# Path configurable via PROJECTS_FILE env var (default: projects.yaml).
+#
+# Fields:
+#   id                          Unique slug used internally (no spaces)
+#   name                        Human-readable display name
+#   repo_url                    SSH or HTTPS git URL for code-touching agents
+#   aliases                     Alternative names used by the Telegram ProjectExtractor
+#   integrations.linear_project_id   Linear project UUID (Settings → Copy project ID)
+
+projects:
+  - id: flowfocus
+    name: FlowFocus
+    repo_url: git@github.com:org/flowfocus.git
+    aliases:
+      - flow
+      - ff
+      - flow focus
+    integrations:
+      linear_project_id: ""   # paste your Linear project UUID here
+
+  - id: conductor
+    name: Conductor
+    repo_url: git@github.com:cinekk/conductor.git
+    aliases:
+      - conductor
+    integrations:
+      linear_project_id: ""   # paste your Linear project UUID here

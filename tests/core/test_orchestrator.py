@@ -2,7 +2,7 @@ import uuid
 
 import pytest
 
-from conductor.core.domain.task import AgentType, ConductorTask, TaskStatus
+from conductor.core.domain.task import AgentType, ConductorProject, ConductorTask, MissingProjectError, TaskStatus
 from conductor.core.orchestrator import Orchestrator, UnroutableTaskError
 from conductor.core.ports.agent_port import AgentPort
 
@@ -25,7 +25,18 @@ class TransitioningAgent(AgentPort):
         return task
 
 
-def make_task(status: TaskStatus, agent: AgentType = AgentType.ORCHESTRATOR) -> ConductorTask:
+_SAMPLE_PROJECT = ConductorProject(
+    id="myapp",
+    name="MyApp",
+    repo_url="git@github.com:org/myapp.git",
+)
+
+
+def make_task(
+    status: TaskStatus,
+    agent: AgentType = AgentType.ORCHESTRATOR,
+    project: ConductorProject | None = _SAMPLE_PROJECT,
+) -> ConductorTask:
     return ConductorTask(
         id=str(uuid.uuid4()),
         external_id="LIN-1",
@@ -34,6 +45,7 @@ def make_task(status: TaskStatus, agent: AgentType = AgentType.ORCHESTRATOR) -> 
         spec="spec",
         status=status,
         assigned_to=agent,
+        project=project,
     )
 
 
@@ -44,6 +56,7 @@ def make_orchestrator() -> Orchestrator:
             AgentType.DEVELOPER: TransitioningAgent(TaskStatus.IN_PROGRESS_QA),
             AgentType.QA: TransitioningAgent(TaskStatus.READY_FOR_DEPLOY),
             AgentType.DEPLOYER: TransitioningAgent(TaskStatus.DEPLOYING),
+            AgentType.RESEARCHER: EchoAgent(),
         }
     )
 
@@ -94,3 +107,52 @@ async def test_missing_agent_raises():
     task = make_task(TaskStatus.PENDING)
     with pytest.raises(UnroutableTaskError, match="No agent registered"):
         await orch.handle(task)
+
+
+# ---------------------------------------------------------------------------
+# Project-based routing tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_routes_to_researcher_when_project_is_none():
+    """Tasks with no project context must go to RESEARCHER regardless of status."""
+    orch = make_orchestrator()
+    task = make_task(TaskStatus.PENDING, project=None)
+    result = await orch.handle(task)
+    # EchoAgent leaves status unchanged
+    assert result.status == TaskStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_researcher_not_registered_raises_when_project_is_none():
+    orch = Orchestrator(
+        agent_registry={
+            AgentType.ORCHESTRATOR: EchoAgent(),
+        }
+    )
+    task = make_task(TaskStatus.PENDING, project=None)
+    with pytest.raises(UnroutableTaskError, match="RESEARCHER"):
+        await orch.handle(task)
+
+
+@pytest.mark.asyncio
+async def test_full_pipeline_used_when_project_is_set():
+    """Tasks with a project set use the normal routing table (PENDING → ORCHESTRATOR)."""
+    orch = make_orchestrator()
+    task = make_task(TaskStatus.PENDING, project=_SAMPLE_PROJECT)
+    result = await orch.handle(task)
+    assert result.status == TaskStatus.PENDING  # ORCHESTRATOR → EchoAgent
+
+
+@pytest.mark.asyncio
+async def test_require_project_raises_missing_project_error():
+    task = make_task(TaskStatus.IN_PROGRESS_DEV, project=None)
+    with pytest.raises(MissingProjectError, match="no project configured"):
+        Orchestrator._require_project(task)
+
+
+def test_require_project_returns_project_when_set():
+    task = make_task(TaskStatus.IN_PROGRESS_DEV, project=_SAMPLE_PROJECT)
+    project = Orchestrator._require_project(task)
+    assert project.id == "myapp"

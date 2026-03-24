@@ -8,6 +8,18 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+@dataclass
+class ConductorProject:
+    id: str
+    name: str
+    repo_url: str
+    aliases: list[str] = field(default_factory=list)
+
+
+class MissingProjectError(Exception):
+    """Raised when a code-touching agent requires a project but none is set on the task."""
+
+
 class TaskStatus(StrEnum):
     PENDING = "pending"
     IN_PROGRESS_DEV = "in_progress_dev"
@@ -49,6 +61,7 @@ class ConductorTask:
     spec: str                         # Full description / requirements
     status: TaskStatus
     assigned_to: AgentType
+    project: ConductorProject | None = None          # resolved project context
     history: list[dict[str, Any]] = field(default_factory=list)   # audit trail
     metadata: dict[str, Any] = field(default_factory=dict)        # source-specific extras
     created_at: datetime = field(default_factory=_utcnow)

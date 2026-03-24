@@ -1,12 +1,14 @@
+import textwrap
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from conductor.adapters.linear.adapter import LinearAdapter
+from conductor.adapters.project.yaml_registry import YamlProjectRegistry
 from conductor.core.domain.task import AgentType, ConductorTask, TaskStatus
 
 
-def make_adapter() -> tuple[LinearAdapter, MagicMock]:
+def make_adapter(project_registry=None) -> tuple[LinearAdapter, MagicMock]:
     client = MagicMock()
     client.add_comment = AsyncMock()
     client.update_state = AsyncMock()
@@ -17,8 +19,23 @@ def make_adapter() -> tuple[LinearAdapter, MagicMock]:
             {"id": "s-done", "name": "Done", "type": "completed"},
         ]
     )
-    adapter = LinearAdapter(client=client, team_id="team-1")
+    adapter = LinearAdapter(client=client, team_id="team-1", project_registry=project_registry)
     return adapter, client
+
+
+@pytest.fixture
+def registry(tmp_path):
+    content = textwrap.dedent("""\
+        projects:
+          - id: myapp
+            name: MyApp
+            repo_url: git@github.com:org/myapp.git
+            integrations:
+              linear_project_id: lin-proj-uuid
+    """)
+    p = tmp_path / "projects.yaml"
+    p.write_text(content)
+    return YamlProjectRegistry(str(p))
 
 
 WEBHOOK_PAYLOAD = {
@@ -28,6 +45,17 @@ WEBHOOK_PAYLOAD = {
         "description": "Users cannot log in with SSO.",
         "team": {"id": "team-1"},
         "state": {"id": "s-todo"},
+    }
+}
+
+WEBHOOK_PAYLOAD_WITH_PROJECT = {
+    "data": {
+        "id": "issue-xyz",
+        "title": "Add dark mode",
+        "description": "Implement dark mode toggle.",
+        "team": {"id": "team-1"},
+        "state": {"id": "s-todo"},
+        "project": {"id": "lin-proj-uuid"},
     }
 }
 
@@ -132,3 +160,49 @@ async def test_state_map_is_cached():
     await adapter.from_task(await make_task(TaskStatus.DONE))
 
     assert client.get_workflow_states.await_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Project resolution tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_to_task_resolves_project_when_registry_provided(registry):
+    adapter, _ = make_adapter(project_registry=registry)
+    task = await adapter.to_task(WEBHOOK_PAYLOAD_WITH_PROJECT)
+
+    assert task.project is not None
+    assert task.project.id == "myapp"
+    assert task.project.repo_url == "git@github.com:org/myapp.git"
+
+
+@pytest.mark.asyncio
+async def test_to_task_project_none_when_no_linear_project_in_payload(registry):
+    adapter, _ = make_adapter(project_registry=registry)
+    task = await adapter.to_task(WEBHOOK_PAYLOAD)  # no "project" key in data
+
+    assert task.project is None
+
+
+@pytest.mark.asyncio
+async def test_to_task_project_none_when_no_registry():
+    adapter, _ = make_adapter(project_registry=None)
+    task = await adapter.to_task(WEBHOOK_PAYLOAD_WITH_PROJECT)
+
+    assert task.project is None
+
+
+@pytest.mark.asyncio
+async def test_to_task_project_none_when_linear_id_not_in_registry(registry):
+    payload = {
+        "data": {
+            "id": "issue-1",
+            "title": "T",
+            "project": {"id": "unknown-linear-uuid"},
+        }
+    }
+    adapter, _ = make_adapter(project_registry=registry)
+    task = await adapter.to_task(payload)
+
+    assert task.project is None

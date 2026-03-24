@@ -4,6 +4,7 @@ Wires together the adapters, orchestrator, and FastAPI app.
 """
 
 import logging
+import os
 
 import uvicorn
 
@@ -18,19 +19,43 @@ from conductor.adapters.agents.agent_impls import (
 from conductor.adapters.agents.claude_agent import ClaudeAgentAdapter
 from conductor.adapters.linear.adapter import LinearAdapter
 from conductor.adapters.linear.client import LinearClient
+from conductor.adapters.project.yaml_registry import YamlProjectRegistry
 from conductor.api.webhook import app  # noqa: F401  (re-exported for uvicorn)
 from conductor.config import settings
 from conductor.core.domain.task import AgentType
 from conductor.core.orchestrator import Orchestrator
+from conductor.core.ports.project_registry_port import ProjectRegistryPort
 from conductor.observability import setup_tracing
 from conductor.prompts import PromptRegistry
 
 logging.basicConfig(level=settings.log_level.upper())
 
+_log = logging.getLogger(__name__)
+
+
+def _load_project_registry() -> ProjectRegistryPort | None:
+    """Load the project registry from projects_file if the file exists."""
+    if not os.path.exists(settings.projects_file):
+        _log.warning(
+            "projects_file %r not found — project resolution disabled. "
+            "Create it from the projects.yaml template.",
+            settings.projects_file,
+        )
+        return None
+    registry = YamlProjectRegistry(path=settings.projects_file)
+    _log.info(
+        "ProjectRegistry loaded from %r (%d projects)",
+        settings.projects_file,
+        len(registry.get_all()),
+    )
+    return registry
+
 
 def build_app() -> None:
     """Initialise registries. Called once at startup."""
     setup_tracing()
+
+    project_registry = _load_project_registry()
 
     prompts = PromptRegistry()
 
@@ -63,11 +88,15 @@ def build_app() -> None:
     # Linear adapter — only register if credentials are configured
     if settings.linear_api_key and settings.linear_team_id:
         linear_client = LinearClient(api_key=settings.linear_api_key)
-        linear_adapter = LinearAdapter(client=linear_client, team_id=settings.linear_team_id)
+        linear_adapter = LinearAdapter(
+            client=linear_client,
+            team_id=settings.linear_team_id,
+            project_registry=project_registry,
+        )
         webhook_module.adapter_registry["linear"] = linear_adapter
-        logging.getLogger(__name__).info("LinearAdapter registered")
+        _log.info("LinearAdapter registered")
     else:
-        logging.getLogger(__name__).warning(
+        _log.warning(
             "LINEAR_API_KEY or LINEAR_TEAM_ID not set — LinearAdapter not registered"
         )
 
