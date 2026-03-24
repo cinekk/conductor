@@ -3,7 +3,8 @@
 Personal AI orchestration framework. Conductor receives events from external tools (Linear, Telegram, …), routes each task to the right Claude agent, and posts results back — fully automated.
 
 ```
-Linear webhook → Conductor → Orchestrator → Developer / QA / Deployer agent → Linear comment
+Linear webhook  → Conductor → ProjectRegistry → Orchestrator → Developer / QA / Deployer agent → Linear comment
+Telegram message → Conductor → ProjectExtractor (LLM) → Orchestrator → Researcher agent → (reply TBD)
 ```
 
 Traces every LLM call to Langfuse for cost and latency visibility.
@@ -14,14 +15,15 @@ Traces every LLM call to Langfuse for cost and latency visibility.
 
 1. [Architecture](#architecture)
 2. [Local development](#local-development)
-3. [Deployment](#deployment)
+3. [Project registry](#project-registry)
+4. [Deployment](#deployment)
    - [Provision a VPS with Terraform](#1-provision-a-vps-with-terraform)
    - [Point DNS](#2-point-dns)
    - [Configure secrets](#3-configure-secrets)
    - [Deploy the stack](#4-deploy-the-stack)
    - [Switching cloud providers](#switching-cloud-providers)
-4. [Observability](#observability)
-5. [Project structure](#project-structure)
+5. [Observability](#observability)
+6. [Project structure](#project-structure)
 
 ---
 
@@ -84,10 +86,72 @@ ngrok http 8000
 ### Test
 
 ```bash
-make test         # runs all 61 tests
+make test         # runs all tests
 make lint         # ruff check + format check
 make typecheck    # mypy --strict
 make fmt          # auto-fix formatting
+```
+
+---
+
+## Project registry
+
+Conductor needs to know which projects it manages so it can:
+
+- **Linear** — reverse-lookup the Linear project UUID attached to an issue and attach the matching `ConductorProject` to the task (giving agents the `repo_url` to clone).
+- **Telegram** — use an LLM call (`ProjectExtractor`) to identify which project a free-text message refers to, using project names and aliases.
+
+Tasks that cannot be matched to any project are routed to the **Researcher** agent only (no code access). Tasks with a project proceed through the full pipeline (Developer → QA → Deployer).
+
+### 1. Configure `projects.yaml`
+
+A commented template is included at the root of the repo. Copy and fill it in:
+
+```bash
+# projects.yaml is already committed as a template — edit it directly
+$EDITOR projects.yaml
+```
+
+Each entry looks like this:
+
+```yaml
+projects:
+  - id: myapp                               # unique slug (no spaces)
+    name: MyApp                             # display name shown in prompts
+    repo_url: git@github.com:org/myapp.git  # SSH URL for code-touching agents
+    aliases:                                # alternative names for Telegram matching
+      - app
+      - my app
+    integrations:
+      linear_project_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+```
+
+**Finding your Linear project UUID:**
+1. Open Linear → your project → **Settings**
+2. Copy the UUID from the URL: `linear.app/team/project/<uuid>/...`
+   or use **⌘K → Copy project ID**
+
+### 2. Set the file path (optional)
+
+By default Conductor reads `projects.yaml` in the working directory. Override with:
+
+```bash
+# .env
+PROJECTS_FILE=/etc/conductor/projects.yaml
+```
+
+If the file is missing at startup, Conductor logs a warning and disables project resolution — the server still starts and routes all tasks to the Researcher.
+
+### 3. Deploy the file
+
+When running in Docker, mount the file into the container:
+
+```yaml
+# docker-compose.yml (override or extend)
+services:
+  conductor:
+    volumes:
+      - ./projects.yaml:/app/projects.yaml:ro
 ```
 
 ---
@@ -166,6 +230,7 @@ Key variables to set in `.env`:
 | `LINEAR_API_KEY` | Linear API token |
 | `LINEAR_WEBHOOK_SECRET` | From Linear → Settings → Webhooks |
 | `LINEAR_TEAM_ID` | Your Linear team UUID |
+| `PROJECTS_FILE` | Path to `projects.yaml` (default: `projects.yaml`) |
 | `CONDUCTOR_DOMAIN` | e.g. `conductor.yourdomain.com` |
 | `LANGFUSE_DOMAIN` | e.g. `langfuse.yourdomain.com` |
 | `LANGFUSE_DB_PASSWORD` | Any strong random string |
@@ -245,21 +310,27 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://your-backend:4318
 ```
 conductor/
 ├── core/
-│   ├── domain/task.py        # ConductorTask, TaskStatus, AgentType
-│   ├── orchestrator.py       # routes task status → agent type
-│   └── ports/                # ABCs: AgentPort, AdapterPort, LLMPort
+│   ├── domain/task.py        # ConductorTask, ConductorProject, TaskStatus, AgentType
+│   ├── orchestrator.py       # project-aware routing: None→Researcher, set→pipeline
+│   └── ports/                # ABCs: AgentPort, AdapterPort, LLMPort, ProjectRegistryPort
 ├── adapters/
 │   ├── agents/claude_agent.py    # ClaudeAgentAdapter (real) + MockLLMAdapter (tests)
+│   ├── project/
+│   │   └── yaml_registry.py  # YamlProjectRegistry — loads projects.yaml at startup
+│   ├── telegram/
+│   │   └── adapter.py        # TelegramAdapter + ProjectExtractor (LLM-based matching)
 │   └── linear/
 │       ├── client.py         # GraphQL wrapper for Linear API
-│       ├── adapter.py        # AdapterPort: Linear webhook → ConductorTask → comment
+│       ├── adapter.py        # AdapterPort: webhook → ConductorTask (resolves project)
 │       └── signature.py      # HMAC-SHA256 webhook verification
 ├── api/webhook.py            # FastAPI: POST /webhook/{source}, GET /health
 ├── observability.py          # OTEL setup, get_tracer()
 ├── prompts.py                # File-based prompt registry (name@version.txt)
 ├── prompt_templates/         # developer-agent@1.txt, qa-agent@1.txt
-├── config.py                 # pydantic-settings from env vars
-└── main.py                   # build_app() wires everything together
+├── config.py                 # pydantic-settings — includes PROJECTS_FILE
+└── main.py                   # build_app() loads registry, wires adapters
+
+projects.yaml                 # project registry (edit this — see Project registry section)
 
 terraform/
 ├── main.tf / variables.tf / outputs.tf

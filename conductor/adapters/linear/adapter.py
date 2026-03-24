@@ -3,6 +3,7 @@ import uuid
 from conductor.adapters.linear.client import LinearClient
 from conductor.core.domain.task import AgentType, ConductorTask, TaskStatus
 from conductor.core.ports.adapter_port import AdapterPort
+from conductor.core.ports.project_registry_port import ProjectRegistryPort
 
 # Maps internal TaskStatus values to Linear workflow state names.
 # Linear state names are team-configurable, so we match by name (case-insensitive).
@@ -26,9 +27,15 @@ class LinearAdapter(AdapterPort):
     Outbound: ConductorTask result → Linear comment + optional state update
     """
 
-    def __init__(self, client: LinearClient, team_id: str) -> None:
+    def __init__(
+        self,
+        client: LinearClient,
+        team_id: str,
+        project_registry: ProjectRegistryPort | None = None,
+    ) -> None:
         self._client = client
         self._team_id = team_id
+        self._registry = project_registry
         # Lazy-loaded state map: {name_lower: state_id}
         self._state_map: dict[str, str] = {}
 
@@ -39,6 +46,11 @@ class LinearAdapter(AdapterPort):
         (for easier testing).
         """
         issue = payload.get("data", payload)
+        project = None
+        if self._registry is not None:
+            linear_project_id = (issue.get("project") or {}).get("id")
+            if linear_project_id:
+                project = self._registry.get_by_integration_id("linear", linear_project_id)
         return ConductorTask(
             id=str(uuid.uuid4()),
             external_id=issue["id"],
@@ -47,6 +59,7 @@ class LinearAdapter(AdapterPort):
             spec=issue.get("description") or "",
             status=TaskStatus.PENDING,
             assigned_to=AgentType.ORCHESTRATOR,
+            project=project,
             metadata={
                 "team_id": (issue.get("team") or {}).get("id", self._team_id),
                 "state_id": (issue.get("state") or {}).get("id"),

@@ -1,4 +1,10 @@
-from conductor.core.domain.task import AgentType, ConductorTask, TaskStatus
+from conductor.core.domain.task import (
+    AgentType,
+    ConductorProject,
+    ConductorTask,
+    MissingProjectError,
+    TaskStatus,
+)
 from conductor.core.ports.agent_port import AgentPort
 from conductor.observability import get_tracer
 
@@ -10,6 +16,9 @@ _ROUTING_TABLE: dict[TaskStatus, AgentType] = {
     TaskStatus.READY_FOR_DEPLOY: AgentType.DEPLOYER,
 }
 
+# Agent types that operate on code and therefore require task.project to be set
+_CODE_TOUCHING_AGENTS = {AgentType.DEVELOPER, AgentType.QA, AgentType.DEPLOYER}
+
 
 class UnroutableTaskError(Exception):
     """Raised when no agent is registered for the task's current status."""
@@ -20,6 +29,10 @@ class Orchestrator:
 
     The Orchestrator knows nothing about Linear, Telegram, or Claude — only
     about ports. Inject concrete implementations via the agent_registry.
+
+    Routing logic:
+    - task.project is None → Researcher only (no repo context; research/Q&A only)
+    - task.project is set  → full pipeline via _ROUTING_TABLE
     """
 
     def __init__(self, agent_registry: dict[AgentType, AgentPort]) -> None:
@@ -28,14 +41,22 @@ class Orchestrator:
     async def handle(self, task: ConductorTask) -> ConductorTask:
         """Determine the responsible agent, delegate, and return the updated task."""
         tracer = get_tracer()
-        with tracer.start_as_current_span(f"task.handle") as span:
+        with tracer.start_as_current_span("task.handle") as span:
             span.set_attribute("task.id", task.id)
             span.set_attribute("task.external_id", task.external_id)
             span.set_attribute("task.source", task.source)
             span.set_attribute("task.status", task.status.value)
+            span.set_attribute("task.has_project", task.project is not None)
+
+            if task.project is None:
+                span.set_attribute("task.agent_type", AgentType.RESEARCHER.value)
+                return await self._handle_no_project(task)
 
             agent_type = self._route(task)
             span.set_attribute("task.agent_type", agent_type.value)
+
+            if agent_type in _CODE_TOUCHING_AGENTS:
+                self._require_project(task)  # safety net — should never raise here
 
             agent = self._agents.get(agent_type)
             if agent is None:
@@ -49,6 +70,20 @@ class Orchestrator:
                 agent_span.set_attribute("agent.result_status", result.status.value)
             return result
 
+    async def _handle_no_project(self, task: ConductorTask) -> ConductorTask:
+        """Route a project-less task to the Researcher agent."""
+        researcher = self._agents.get(AgentType.RESEARCHER)
+        if researcher is None:
+            raise UnroutableTaskError(
+                f"No RESEARCHER agent registered — required for tasks with no project context "
+                f"(task {task.id!r})"
+            )
+        tracer = get_tracer()
+        with tracer.start_as_current_span(f"agent.execute:{AgentType.RESEARCHER.value}") as s:
+            result = await researcher.execute(task)
+            s.set_attribute("agent.result_status", result.status.value)
+        return result
+
     def _route(self, task: ConductorTask) -> AgentType:
         """Map the task's current status to the next agent type."""
         agent_type = _ROUTING_TABLE.get(task.status)
@@ -59,3 +94,17 @@ class Orchestrator:
                 f"Routable statuses: {sorted(s.value for s in _ROUTING_TABLE)}"
             )
         return agent_type
+
+    @staticmethod
+    def _require_project(task: ConductorTask) -> ConductorProject:
+        """Assert that the task has a project set.
+
+        This is a programming-error guard — the orchestrator should have already
+        routed project-less tasks to the Researcher before reaching code-touching agents.
+        """
+        if task.project is None:
+            raise MissingProjectError(
+                f"Task {task.id!r} has no project configured. "
+                "Ensure this task has a project assigned before routing to code-touching agents."
+            )
+        return task.project
