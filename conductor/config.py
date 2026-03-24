@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     linear_api_key: str = ""
     linear_webhook_secret: str = ""
     linear_team_id: str = ""
+    telegram_bot_token: str = ""
+    github_token: str = ""
     projects_file: str = "projects.yaml"
     log_level: str = "INFO"
 

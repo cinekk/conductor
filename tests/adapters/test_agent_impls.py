@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -14,7 +15,7 @@ from conductor.adapters.agents.agent_impls import (
     QAAgent,
     ResearcherAgent,
 )
-from conductor.core.domain.task import AgentType, ConductorTask, TaskStatus
+from conductor.core.domain.task import AgentType, ConductorProject, ConductorTask, TaskStatus
 from conductor.core.ports.llm_port import LLMPort
 from conductor.prompts import PromptRegistry
 
@@ -36,6 +37,12 @@ class _MockLLM(LLMPort):
 
 # Alias to keep test body readable
 MockLLMAdapter = _MockLLM
+
+_SAMPLE_PROJECT = ConductorProject(
+    id="myapp",
+    name="MyApp",
+    repo_url="https://github.com/org/myapp.git",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +72,31 @@ def make_task(status: TaskStatus, agent: AgentType = AgentType.ORCHESTRATOR) -> 
         spec="Implement X",
         status=status,
         assigned_to=agent,
+    )
+
+
+def make_task_with_project(
+    status: TaskStatus, agent: AgentType = AgentType.DEVELOPER
+) -> ConductorTask:
+    return ConductorTask(
+        id=str(uuid.uuid4()),
+        external_id="LIN-42",
+        source="linear",
+        title="Test task",
+        spec="Implement X",
+        status=status,
+        assigned_to=agent,
+        project=_SAMPLE_PROJECT,
+    )
+
+
+def _mock_git():
+    """Return a context manager that patches all conductor.git functions."""
+    return patch.multiple(
+        "conductor.git",
+        clone_repo=MagicMock(),
+        commit_and_push=MagicMock(),
+        open_pr=AsyncMock(return_value="https://github.com/org/myapp/pull/1"),
     )
 
 
@@ -107,28 +139,32 @@ async def test_orchestrator_appends_history(prompts: PromptRegistry) -> None:
 
 @pytest.mark.asyncio
 async def test_developer_transitions_to_in_progress_qa(prompts: PromptRegistry) -> None:
-    agent = DeveloperAgent(llm=MockLLMAdapter(response="done"), prompts=prompts)
-    task = make_task(TaskStatus.IN_PROGRESS_DEV, AgentType.DEVELOPER)
-    result = await agent.execute(task)
+    with _mock_git():
+        agent = DeveloperAgent(llm=MockLLMAdapter(response="done"), prompts=prompts)
+        task = make_task_with_project(TaskStatus.IN_PROGRESS_DEV)
+        result = await agent.execute(task)
     assert result.status == TaskStatus.IN_PROGRESS_QA
 
 
 @pytest.mark.asyncio
 async def test_developer_assigns_qa(prompts: PromptRegistry) -> None:
-    agent = DeveloperAgent(llm=MockLLMAdapter(), prompts=prompts)
-    task = make_task(TaskStatus.IN_PROGRESS_DEV, AgentType.DEVELOPER)
-    result = await agent.execute(task)
+    with _mock_git():
+        agent = DeveloperAgent(llm=MockLLMAdapter(), prompts=prompts)
+        task = make_task_with_project(TaskStatus.IN_PROGRESS_DEV)
+        result = await agent.execute(task)
     assert result.assigned_to == AgentType.QA
 
 
 @pytest.mark.asyncio
 async def test_developer_appends_history(prompts: PromptRegistry) -> None:
-    agent = DeveloperAgent(llm=MockLLMAdapter(response="implemented"), prompts=prompts)
-    task = make_task(TaskStatus.IN_PROGRESS_DEV, AgentType.DEVELOPER)
-    result = await agent.execute(task)
+    with _mock_git():
+        agent = DeveloperAgent(llm=MockLLMAdapter(response="implemented"), prompts=prompts)
+        task = make_task_with_project(TaskStatus.IN_PROGRESS_DEV)
+        result = await agent.execute(task)
     agent_entries = [e for e in result.history if e.get("agent") == AgentType.DEVELOPER.value]
     assert len(agent_entries) == 1
     assert agent_entries[0]["result"] == "implemented"
+    assert agent_entries[0]["pr_url"] == "https://github.com/org/myapp/pull/1"
 
 
 # ---------------------------------------------------------------------------
@@ -195,11 +231,11 @@ async def test_qa_appends_history(prompts: PromptRegistry) -> None:
 
 
 @pytest.mark.asyncio
-async def test_deployer_transitions_to_deploying(prompts: PromptRegistry) -> None:
+async def test_deployer_transitions_to_done(prompts: PromptRegistry) -> None:
     agent = DeployerAgent(llm=MockLLMAdapter(response="deployed"), prompts=prompts)
     task = make_task(TaskStatus.READY_FOR_DEPLOY, AgentType.DEPLOYER)
     result = await agent.execute(task)
-    assert result.status == TaskStatus.DEPLOYING
+    assert result.status == TaskStatus.DONE
 
 
 @pytest.mark.asyncio
@@ -255,6 +291,9 @@ async def test_all_agents_use_real_prompt_templates() -> None:
     # Orchestrator and Researcher don't need valid status transitions for this check
     # so we use statuses that each agent is designed to handle.
     await _run(OrchestratorAgent, TaskStatus.PENDING, AgentType.ORCHESTRATOR)
-    await _run(DeveloperAgent, TaskStatus.IN_PROGRESS_DEV, AgentType.DEVELOPER)
+    with _mock_git():
+        agent = DeveloperAgent(llm=MockLLMAdapter(), prompts=real_prompts)
+        task = make_task_with_project(TaskStatus.IN_PROGRESS_DEV, AgentType.DEVELOPER)
+        await agent.execute(task)
     await _run(QAAgent, TaskStatus.IN_PROGRESS_QA, AgentType.QA)
     await _run(DeployerAgent, TaskStatus.READY_FOR_DEPLOY, AgentType.DEPLOYER)

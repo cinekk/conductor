@@ -16,12 +16,16 @@ Tool allowlists per agent type (mirrors comments in claude_agent.py):
 
 from __future__ import annotations
 
+import logging
+import tempfile
 from datetime import UTC, datetime
 
 from conductor.core.domain.task import AgentType, ConductorTask, TaskStatus
 from conductor.core.ports.agent_port import AgentPort
 from conductor.core.ports.llm_port import LLMPort
 from conductor.prompts import PromptRegistry
+
+log = logging.getLogger(__name__)
 
 
 def _utcnow_iso() -> str:
@@ -54,7 +58,7 @@ class OrchestratorAgent(AgentPort):
 
 
 class DeveloperAgent(AgentPort):
-    """Implements the task and passes it to QA."""
+    """Clones the project repo, implements the task, opens a PR, then passes to QA."""
 
     _TOOLS: list[str] = ["Read", "Write", "Edit", "Bash"]
     _PROMPT_NAME = "developer-agent"
@@ -64,10 +68,46 @@ class DeveloperAgent(AgentPort):
         self._prompts = prompts
 
     async def execute(self, task: ConductorTask) -> ConductorTask:
-        system_prompt = self._prompts.get(self._PROMPT_NAME, spec=task.spec)
-        result = await self._llm.run(system_prompt, _user_prompt(task), self._TOOLS)
+        import conductor.git as git_utils
+
+        # task.project is guaranteed non-None by the orchestrator's _require_project guard
+        project = task.project  # type: ignore[assignment]
+        branch = f"conductor/{task.id[:8]}"
+
+        with tempfile.TemporaryDirectory() as repo_path:
+            git_utils.clone_repo(project.repo_url, repo_path, branch)
+
+            system_prompt = self._prompts.get(
+                self._PROMPT_NAME, spec=task.spec, repo_path=repo_path
+            )
+            result = await self._llm.run(system_prompt, _user_prompt(task), self._TOOLS)
+
+            git_utils.commit_and_push(
+                repo_path, branch, f"conductor: {task.title} (task/{task.id[:8]})"
+            )
+            try:
+                pr_url = await git_utils.open_pr(
+                    project.repo_url,
+                    branch=branch,
+                    title=task.title,
+                    body=(
+                        f"Automated implementation by Conductor.\n\n"
+                        f"Task ID: `{task.id}`\n\n"
+                        f"## Summary\n{result}"
+                    ),
+                )
+            except Exception as exc:
+                log.warning("Could not open PR for task %s: %s", task.id, exc)
+                pr_url = None
+
         task.history.append(
-            {"agent": AgentType.DEVELOPER.value, "result": result, "at": _utcnow_iso()}
+            {
+                "agent": AgentType.DEVELOPER.value,
+                "result": result,
+                "branch": branch,
+                "pr_url": pr_url,
+                "at": _utcnow_iso(),
+            }
         )
         task.transition(TaskStatus.IN_PROGRESS_QA)
         task.assigned_to = AgentType.QA
@@ -119,6 +159,7 @@ class DeployerAgent(AgentPort):
             {"agent": AgentType.DEPLOYER.value, "result": result, "at": _utcnow_iso()}
         )
         task.transition(TaskStatus.DEPLOYING)
+        task.transition(TaskStatus.DONE)
         return task
 
 
