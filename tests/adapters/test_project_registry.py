@@ -58,23 +58,28 @@ def test_get_by_id_not_found(registry_file):
     assert reg.get_by_id("nonexistent") is None
 
 
-def test_get_by_linear_project_id_found(registry_file):
+def test_get_by_integration_id_found(registry_file):
     reg = YamlProjectRegistry(registry_file)
-    project = reg.get_by_linear_project_id("lin-uuid-alpha")
+    project = reg.get_by_integration_id("linear", "lin-uuid-alpha")
     assert project is not None
     assert project.id == "alpha"
 
 
-def test_get_by_linear_project_id_not_found(registry_file):
+def test_get_by_integration_id_not_found(registry_file):
     reg = YamlProjectRegistry(registry_file)
-    assert reg.get_by_linear_project_id("unknown-uuid") is None
+    assert reg.get_by_integration_id("linear", "unknown-uuid") is None
 
 
-def test_project_without_linear_id_not_in_linear_lookup(registry_file):
-    """gamma has no integrations block — should not appear in linear lookup."""
+def test_get_by_integration_id_wrong_provider(registry_file):
+    reg = YamlProjectRegistry(registry_file)
+    assert reg.get_by_integration_id("github", "lin-uuid-alpha") is None
+
+
+def test_project_without_integration_not_in_lookup(registry_file):
+    """gamma has no integrations block — should not appear in integration lookup."""
     reg = YamlProjectRegistry(registry_file)
     assert reg.get_by_id("gamma") is not None
-    assert reg.get_by_linear_project_id("") is None
+    assert reg.get_by_integration_id("linear", "") is None
 
 
 def test_empty_file(tmp_path):

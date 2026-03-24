@@ -100,6 +100,8 @@ def build_app() -> None:
             "LINEAR_API_KEY or LINEAR_TEAM_ID not set — LinearAdapter not registered"
         )
 
+    # TODO(T4S-133): wire TelegramAdapter when TELEGRAM_BOT_TOKEN is configured.
+
 
 build_app()
 

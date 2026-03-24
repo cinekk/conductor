@@ -50,7 +50,7 @@ class LinearAdapter(AdapterPort):
         if self._registry is not None:
             linear_project_id = (issue.get("project") or {}).get("id")
             if linear_project_id:
-                project = self._registry.get_by_linear_project_id(linear_project_id)
+                project = self._registry.get_by_integration_id("linear", linear_project_id)
         return ConductorTask(
             id=str(uuid.uuid4()),
             external_id=issue["id"],

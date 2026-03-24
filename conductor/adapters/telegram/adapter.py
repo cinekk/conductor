@@ -16,6 +16,8 @@ from conductor.core.ports.adapter_port import AdapterPort
 from conductor.core.ports.llm_port import LLMPort
 from conductor.core.ports.project_registry_port import ProjectRegistryPort
 
+_MIN_CONFIDENCE = 0.6
+
 _EXTRACTOR_SYSTEM = (
     "You are a project classifier. Given a list of known projects and a user message, "
     "return JSON identifying which project the message refers to, or null if none.\n\n"
@@ -58,7 +60,7 @@ class ProjectExtractor:
             )
         except (json.JSONDecodeError, KeyError, ValueError):
             return None
-        if result.project_id is None:
+        if result.project_id is None or result.confidence < _MIN_CONFIDENCE:
             return None
         return self._registry.get_by_id(result.project_id)
 

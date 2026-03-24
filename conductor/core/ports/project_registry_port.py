@@ -16,8 +16,14 @@ class ProjectRegistryPort(ABC):
         ...
 
     @abstractmethod
-    def get_by_linear_project_id(self, linear_project_id: str) -> ConductorProject | None:
-        """Reverse-lookup by Linear project UUID stored in integrations.linear_project_id."""
+    def get_by_integration_id(self, provider: str, integration_id: str) -> ConductorProject | None:
+        """Reverse-lookup by an integration-specific ID.
+
+        Args:
+            provider: Integration name, e.g. ``"linear"``, ``"github"``.
+            integration_id: The external ID stored under
+                ``integrations.<provider>_project_id`` in projects.yaml.
+        """
         ...
 
     @abstractmethod

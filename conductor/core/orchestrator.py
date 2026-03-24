@@ -49,7 +49,8 @@ class Orchestrator:
             span.set_attribute("task.has_project", task.project is not None)
 
             if task.project is None:
-                return await self._handle_no_project(task, span)
+                span.set_attribute("task.agent_type", AgentType.RESEARCHER.value)
+                return await self._handle_no_project(task)
 
             agent_type = self._route(task)
             span.set_attribute("task.agent_type", agent_type.value)
@@ -69,10 +70,8 @@ class Orchestrator:
                 agent_span.set_attribute("agent.result_status", result.status.value)
             return result
 
-    async def _handle_no_project(self, task: ConductorTask, span: object) -> ConductorTask:
+    async def _handle_no_project(self, task: ConductorTask) -> ConductorTask:
         """Route a project-less task to the Researcher agent."""
-        if hasattr(span, "set_attribute"):
-            span.set_attribute("task.agent_type", AgentType.RESEARCHER.value)  # type: ignore[union-attr]
         researcher = self._agents.get(AgentType.RESEARCHER)
         if researcher is None:
             raise UnroutableTaskError(

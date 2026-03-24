@@ -90,6 +90,14 @@ async def test_extractor_returns_none_on_invalid_json(registry):
 
 
 @pytest.mark.asyncio
+async def test_extractor_returns_none_below_confidence_threshold(registry):
+    response = json.dumps({"project_id": "flowfocus", "confidence": 0.4})
+    extractor = make_extractor(response, registry)
+    project = await extractor.extract("Maybe FlowFocus?")
+    assert project is None
+
+
+@pytest.mark.asyncio
 async def test_extractor_returns_none_when_registry_empty(tmp_path):
     p = tmp_path / "empty.yaml"
     p.write_text("projects: []\n")

@@ -18,7 +18,8 @@ class YamlProjectRegistry(ProjectRegistryPort):
     def __init__(self, path: str) -> None:
         self._projects: list[ConductorProject] = []
         self._by_id: dict[str, ConductorProject] = {}
-        self._by_linear_id: dict[str, ConductorProject] = {}
+        # key: (provider, integration_id) — e.g. ("linear", "lin-uuid-alpha")
+        self._by_integration: dict[tuple[str, str], ConductorProject] = {}
         self._load(path)
 
     def _load(self, path: str) -> None:
@@ -33,15 +34,17 @@ class YamlProjectRegistry(ProjectRegistryPort):
             )
             self._projects.append(project)
             self._by_id[project.id] = project
-            linear_id = (entry.get("integrations") or {}).get("linear_project_id")
-            if linear_id:
-                self._by_linear_id[linear_id] = project
+            for key, value in (entry.get("integrations") or {}).items():
+                # key format: "<provider>_project_id" → provider = key split on "_project_id"
+                if key.endswith("_project_id") and value:
+                    provider = key[: -len("_project_id")]
+                    self._by_integration[(provider, str(value))] = project
 
     def get_by_id(self, project_id: str) -> ConductorProject | None:
         return self._by_id.get(project_id)
 
-    def get_by_linear_project_id(self, linear_project_id: str) -> ConductorProject | None:
-        return self._by_linear_id.get(linear_project_id)
+    def get_by_integration_id(self, provider: str, integration_id: str) -> ConductorProject | None:
+        return self._by_integration.get((provider, integration_id))
 
     def get_all(self) -> list[ConductorProject]:
         return list(self._projects)

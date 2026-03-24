@@ -35,7 +35,7 @@ _SAMPLE_PROJECT = ConductorProject(
 def make_task(
     status: TaskStatus,
     agent: AgentType = AgentType.ORCHESTRATOR,
-    project: ConductorProject | None = _SAMPLE_PROJECT,
+    project: ConductorProject | None = None,
 ) -> ConductorTask:
     return ConductorTask(
         id=str(uuid.uuid4()),
@@ -64,7 +64,7 @@ def make_orchestrator() -> Orchestrator:
 @pytest.mark.asyncio
 async def test_routes_pending_to_orchestrator():
     orch = make_orchestrator()
-    task = make_task(TaskStatus.PENDING)
+    task = make_task(TaskStatus.PENDING, project=_SAMPLE_PROJECT)
     result = await orch.handle(task)
     assert result.status == TaskStatus.PENDING  # EchoAgent leaves it unchanged
 
@@ -72,7 +72,7 @@ async def test_routes_pending_to_orchestrator():
 @pytest.mark.asyncio
 async def test_routes_in_progress_dev_to_developer():
     orch = make_orchestrator()
-    task = make_task(TaskStatus.IN_PROGRESS_DEV)
+    task = make_task(TaskStatus.IN_PROGRESS_DEV, project=_SAMPLE_PROJECT)
     result = await orch.handle(task)
     assert result.status == TaskStatus.IN_PROGRESS_QA
 
@@ -80,7 +80,7 @@ async def test_routes_in_progress_dev_to_developer():
 @pytest.mark.asyncio
 async def test_routes_in_progress_qa_to_qa():
     orch = make_orchestrator()
-    task = make_task(TaskStatus.IN_PROGRESS_QA)
+    task = make_task(TaskStatus.IN_PROGRESS_QA, project=_SAMPLE_PROJECT)
     result = await orch.handle(task)
     assert result.status == TaskStatus.READY_FOR_DEPLOY
 
@@ -88,7 +88,7 @@ async def test_routes_in_progress_qa_to_qa():
 @pytest.mark.asyncio
 async def test_routes_ready_for_deploy_to_deployer():
     orch = make_orchestrator()
-    task = make_task(TaskStatus.READY_FOR_DEPLOY)
+    task = make_task(TaskStatus.READY_FOR_DEPLOY, project=_SAMPLE_PROJECT)
     result = await orch.handle(task)
     assert result.status == TaskStatus.DEPLOYING
 
@@ -96,7 +96,7 @@ async def test_routes_ready_for_deploy_to_deployer():
 @pytest.mark.asyncio
 async def test_unroutable_status_raises():
     orch = make_orchestrator()
-    task = make_task(TaskStatus.DONE)
+    task = make_task(TaskStatus.DONE, project=_SAMPLE_PROJECT)
     with pytest.raises(UnroutableTaskError, match="done"):
         await orch.handle(task)
 
@@ -104,7 +104,7 @@ async def test_unroutable_status_raises():
 @pytest.mark.asyncio
 async def test_missing_agent_raises():
     orch = Orchestrator(agent_registry={})  # empty registry
-    task = make_task(TaskStatus.PENDING)
+    task = make_task(TaskStatus.PENDING, project=_SAMPLE_PROJECT)
     with pytest.raises(UnroutableTaskError, match="No agent registered"):
         await orch.handle(task)
 
