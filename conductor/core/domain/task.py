@@ -38,7 +38,7 @@ VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.IN_PROGRESS_QA: {TaskStatus.READY_FOR_DEPLOY, TaskStatus.NEEDS_WORK},
     TaskStatus.NEEDS_WORK: {TaskStatus.IN_PROGRESS_DEV},
     TaskStatus.READY_FOR_DEPLOY: {TaskStatus.DEPLOYING},
-    TaskStatus.DEPLOYING: {TaskStatus.UAT, TaskStatus.NEEDS_WORK},
+    TaskStatus.DEPLOYING: {TaskStatus.UAT, TaskStatus.NEEDS_WORK, TaskStatus.DONE},
     TaskStatus.UAT: {TaskStatus.DONE, TaskStatus.NEEDS_WORK},
     TaskStatus.DONE: set(),
 }

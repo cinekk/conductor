@@ -13,6 +13,7 @@ _ROUTING_TABLE: dict[TaskStatus, AgentType] = {
     TaskStatus.PENDING: AgentType.ORCHESTRATOR,
     TaskStatus.IN_PROGRESS_DEV: AgentType.DEVELOPER,
     TaskStatus.IN_PROGRESS_QA: AgentType.QA,
+    TaskStatus.NEEDS_WORK: AgentType.DEVELOPER,
     TaskStatus.READY_FOR_DEPLOY: AgentType.DEPLOYER,
 }
 

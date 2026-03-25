@@ -8,8 +8,23 @@ import pytest
 
 from conductor.adapters.project.yaml_registry import YamlProjectRegistry
 from conductor.adapters.telegram.adapter import ProjectExtractor, TelegramAdapter
-from conductor.adapters.agents.claude_agent import MockLLMAdapter
 from conductor.core.domain.task import TaskStatus
+from conductor.core.ports.llm_port import LLMPort
+
+
+class MockLLMAdapter(LLMPort):
+    """Local stub — avoids importing claude_agent_sdk."""
+
+    def __init__(self, response: str = "mock response") -> None:
+        self._response = response
+
+    async def run(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[str] | None = None,
+    ) -> str:
+        return self._response
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +133,7 @@ async def test_extractor_returns_none_when_registry_empty(tmp_path):
 async def test_to_task_with_resolved_project(registry):
     response = json.dumps({"project_id": "conductor", "confidence": 0.9})
     extractor = make_extractor(response, registry)
-    adapter = TelegramAdapter(extractor=extractor)
+    adapter = TelegramAdapter(bot_token="test-token", extractor=extractor)
     task = await adapter.to_task(TELEGRAM_PAYLOAD)
 
     assert task.source == "telegram"
@@ -133,7 +148,7 @@ async def test_to_task_with_resolved_project(registry):
 async def test_to_task_project_none_when_not_identified(registry):
     response = json.dumps({"project_id": None, "confidence": 0.0})
     extractor = make_extractor(response, registry)
-    adapter = TelegramAdapter(extractor=extractor)
+    adapter = TelegramAdapter(bot_token="test-token", extractor=extractor)
     task = await adapter.to_task(TELEGRAM_PAYLOAD)
 
     assert task.project is None
@@ -143,7 +158,7 @@ async def test_to_task_project_none_when_not_identified(registry):
 async def test_to_task_title_truncated_to_80_chars(registry):
     response = json.dumps({"project_id": None, "confidence": 0.0})
     extractor = make_extractor(response, registry)
-    adapter = TelegramAdapter(extractor=extractor)
+    adapter = TelegramAdapter(bot_token="test-token", extractor=extractor)
     long_message = "x" * 200
     payload = {"message": {"message_id": 1, "text": long_message}}
     task = await adapter.to_task(payload)
@@ -154,21 +169,21 @@ async def test_to_task_title_truncated_to_80_chars(registry):
 async def test_to_task_empty_message(registry):
     response = json.dumps({"project_id": None, "confidence": 0.0})
     extractor = make_extractor(response, registry)
-    adapter = TelegramAdapter(extractor=extractor)
+    adapter = TelegramAdapter(bot_token="test-token", extractor=extractor)
     task = await adapter.to_task({"message": {"message_id": 1, "text": ""}})
     assert task.title == "(no message)"
     assert task.spec == ""
 
 
 @pytest.mark.asyncio
-async def test_from_task_is_noop(registry):
-    """from_task should not raise — it's a stub."""
+async def test_from_task_skips_reply_when_no_chat_id(registry):
+    """from_task should not raise when telegram_chat_id is absent in metadata."""
     import uuid as _uuid
     from conductor.core.domain.task import AgentType, ConductorTask
 
     response = json.dumps({"project_id": None, "confidence": 0.0})
     extractor = make_extractor(response, registry)
-    adapter = TelegramAdapter(extractor=extractor)
+    adapter = TelegramAdapter(bot_token="test-token", extractor=extractor)
     task = ConductorTask(
         id=str(_uuid.uuid4()),
         external_id="1",
@@ -177,5 +192,23 @@ async def test_from_task_is_noop(registry):
         spec="",
         status=TaskStatus.PENDING,
         assigned_to=AgentType.ORCHESTRATOR,
+        # no telegram_chat_id in metadata → from_task returns early without HTTP call
     )
     await adapter.from_task(task)  # should not raise
+
+
+@pytest.mark.asyncio
+async def test_to_task_stores_chat_id_in_metadata(registry):
+    """to_task should capture the chat id so from_task can reply."""
+    response = json.dumps({"project_id": None, "confidence": 0.0})
+    extractor = make_extractor(response, registry)
+    adapter = TelegramAdapter(bot_token="test-token", extractor=extractor)
+    payload = {
+        "message": {
+            "message_id": 7,
+            "text": "hello",
+            "chat": {"id": 123456},
+        }
+    }
+    task = await adapter.to_task(payload)
+    assert task.metadata.get("telegram_chat_id") == "123456"

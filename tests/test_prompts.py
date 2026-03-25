@@ -79,6 +79,7 @@ def test_real_templates_are_loadable():
     available = registry.available()
     assert "developer-agent" in available
     assert "qa-agent" in available
-    # Templates compile with a spec variable
-    prompt = registry.get("developer-agent", spec="Implement feature X")
+    # Templates compile with expected variables
+    prompt = registry.get("developer-agent", spec="Implement feature X", repo_path="/tmp/repo")
     assert "Implement feature X" in prompt
+    assert "/tmp/repo" in prompt

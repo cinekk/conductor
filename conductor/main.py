@@ -20,6 +20,7 @@ from conductor.adapters.agents.claude_agent import ClaudeAgentAdapter
 from conductor.adapters.linear.adapter import LinearAdapter
 from conductor.adapters.linear.client import LinearClient
 from conductor.adapters.project.yaml_registry import YamlProjectRegistry
+from conductor.adapters.telegram.adapter import ProjectExtractor, TelegramAdapter
 from conductor.api.webhook import app  # noqa: F401  (re-exported for uvicorn)
 from conductor.config import settings
 from conductor.core.domain.task import AgentType
@@ -100,7 +101,18 @@ def build_app() -> None:
             "LINEAR_API_KEY or LINEAR_TEAM_ID not set — LinearAdapter not registered"
         )
 
-    # TODO(T4S-133): wire TelegramAdapter when TELEGRAM_BOT_TOKEN is configured.
+    # Telegram adapter — only register if bot token is configured
+    if settings.telegram_bot_token:
+        extractor_llm = ClaudeAgentAdapter(allowed_tools=[])
+        extractor = ProjectExtractor(llm=extractor_llm, registry=project_registry)
+        telegram_adapter = TelegramAdapter(
+            bot_token=settings.telegram_bot_token,
+            extractor=extractor,
+        )
+        webhook_module.adapter_registry["telegram"] = telegram_adapter
+        _log.info("TelegramAdapter registered")
+    else:
+        _log.warning("TELEGRAM_BOT_TOKEN not set — TelegramAdapter not registered")
 
 
 build_app()
